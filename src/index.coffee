@@ -10,7 +10,11 @@ players = []
 player_nicks = []
 started = false
 mine = []
+shop = []
 turn = 0
+monster = 
+  hp:0
+  card: {}
 
 class Player
   constructor: (@name) ->
@@ -18,6 +22,7 @@ class Player
     @hp = 100
     @level = 1
     @attack = 3
+    @defense = 0
     @dead = false
     @hand = []
     @stats =
@@ -35,17 +40,14 @@ class Player
 
   draw: (i = 1) ->
     for j in [1..i]
-      do =>
-        card = @deck.pop()
-        @hand.push card
-        @stats.attack += card.attack
-        @stats.mine += card.mine
-        @stats.value += card.value
+      card = @deck.pop()
+      @hand.push card
+      @stats.mine += card.mine
+      @stats.value += card.value
 
   discard: (c) ->
     card = @hand.splice(@hand.indexOf(c), 1)[0]
     @deck.push card
-    @stats.attack -= card.attack
     @stats.mine -= card.mine
     @stats.value -= card.value
 
@@ -80,6 +82,7 @@ class Weapon extends Card
     @type = 'weapon'
     @attack = options.attack
     @cost = options.cost
+    @action = options.action
     @description = options.description ? "Can be used to attack Monsters or other Players."
 
 class Armor extends Card
@@ -104,39 +107,72 @@ class Monster extends Card
     @hp = options.hp
     @attack = options.attack
     @description = options.description
+    @loot = options.loot ? []
 
 cards =
-  silver: new Gem
-    name: 'Silver'
+
+  find: (text) ->
+    for key, value of @
+      if @[key].name.toLowerCase() is text
+        return @[key]
+
+
+  # Gems
+
+  rock: new Gem
+    name: 'Rock'
+    value: 0
+
+  copper: new Gem
+    name: 'Copper'
     value: 1
 
-  emerald: new Gem
-    name: 'Emerald'
+  silver: new Gem
+    name: 'Silver'
     value: 2
 
   gold: new Gem
     name: 'Gold'
     value: 3
 
-  ruby: new Gem
-    name: 'Ruby'
-    value: 4
-
   diamond: new Gem
     name: 'Diamond'
     value: 5
+
+
+  # Weapons
 
   dagger: new Weapon
     name: 'Dagger'
     attack: 3
     cost: 3
+    action: (player, discard) ->
+      attack(player, @attack + player.attack, discard)
 
-  stone_pick: new Item
-    name: 'Stone Pickaxe'
+
+  # Items
+
+  pickaxe: new Item
+    name: 'Pickaxe'
     cost: 3
     mine: 1
+    description: "Used to draw cards from the Mine."
+    action: (player, discard) ->
+      if monster.hp > 0 
+        msg 'You cannot mine while there is a monster on the table.'
+      else
+        mine_card(player)
+        discard()
+
+  potion: new Item
+    name: 'Potion'
+    cost: 3
+    description: "Restores 5 HP."
     action: (player) ->
-      mine_card(player)
+      msg "Program me!"
+
+
+  #Monsters
 
   goblin: new Monster
     name: 'Goblin'
@@ -144,25 +180,38 @@ cards =
     hp: 6
     attack: 3
     description: "Cretins with big ears and fangs. Strong and stupid."
+    loot: [
+      ['rock', 2]
+      ['copper', 5]
+      ['potion', 1]
+      [0, 2]
+    ]
+
 
 # Game Actions
 # -------------
 
 generate_cards = ->
-  mine.push(cards.silver) for i in [1..40]
-  mine.push(cards.goblin) for i in [1..40]
-  mine.push(cards.emerald) for i in [1..30]
-  mine.push(cards.gold) for i in [1..20]
-  mine.push(cards.ruby) for i in [1..10]
+  # Populate the Mine
+  mine.push(cards.rock) for i in [1..10]
+  mine.push(cards.copper) for i in [1..15]
+  mine.push(cards.goblin) for i in [1..50]
+  mine.push(cards.silver) for i in [1..10]
+  mine.push(cards.gold) for i in [1..7]
   mine.push(cards.diamond) for i in [1..5]
   mine.shuffle()
+
+  # Populate the Shop
+  shop.push(cards.pickaxe) for i in [1..10]
+  shop.push(cards.potion) for i in [1..10]
+  shop.push(cards.dagger) for i in [1..10]
+
   for player in players
-    do (player) ->
-      player.deck.push(cards.silver) for i in [1..5]
-      player.deck.push(cards.dagger) for i in [1..2]
-      player.deck.push(cards.stone_pick) for i in [1..3]
-      player.deck.shuffle()
-      player.deal()
+    player.deck.push(cards.copper) for i in [1..5]
+    player.deck.push(cards.dagger) for i in [1..2]
+    player.deck.push(cards.pickaxe) for i in [1..3]
+    player.deck.shuffle()
+    player.deal()
 
 next_turn = ->
   turn++
@@ -172,10 +221,18 @@ next_turn = ->
     next_turn()
   else
     msg "#{players[turn].name}: It's your turn!"
+    list_hand(players[turn].name)
 
 check_turn = (player,cb) ->
   if turn is players.indexOf(player) and started
     cb()
+
+monster_attack = ->
+  if monster.hp > 0
+    player = players[turn]
+    msg "the #{monster.card.name} attacks dealing #{monster.card.attack - player.defense} damage."
+    player.hp -= monster.card.attack - player.defense
+
 
 # Player Actions
 # -------------
@@ -192,6 +249,8 @@ start = ->
     msg "Starting game!"
     started = true
     next_turn()
+  else if started
+    msg "The game's already started."
 
 list_hand = (nick) ->
   if started
@@ -218,8 +277,8 @@ use = (text, nick) ->
     text = text.toLowerCase()
     for card in player.hand
       if card.name.toLowerCase() is text
-        card.action(player)
-        player.discard card
+        card.action player, ->
+          player.discard card
         break
 
 end_turn = (nick) ->
@@ -236,15 +295,11 @@ card_info = (text) ->
   for key, value of cards
     if cards[key].name.toLowerCase() is text
       card = cards[key]
-      msg "#{card.name}: " +
-        "[\"#{card.description}\"] " +
-        "[type: #{card.type}] " +
-        (if card.cost isnt 0 then "[cost: #{card.cost}] " else "") +
-        (if card.value isnt 0 then "[value: #{card.value}] " else "") +
-        (if card.attack isnt 0 then "[attack: #{card.attack}] " else "") +
-        (if card.defense isnt 0 then "[defense: #{card.defense}] " else "") +
-        (if card.mine isnt 0 then "[mine: #{card.mine}] " else "") +
-        (if card.level isnt 0 then "[level: #{card.level}]" else "")
+      info_text = "#{card.name}: [\"#{card.description}\"] [type: #{card.type}]"
+      for key, value of card
+        if typeof value is 'number' and value isnt 0
+          info_text += " [#{key}: #{value}]"
+      msg info_text
 
 help = ->
   msg "Available commands: "
@@ -252,6 +307,7 @@ help = ->
   msg "!start: Start the game."
   msg "!hand: View your current hand."
   msg "!info [card name]: View details of a particular card."
+  msg "!use [card name]: Use a particular card in your hand."
   msg "!end: End your turn."
 
 # Card Actions
@@ -264,18 +320,54 @@ mine_card = (player) ->
     msg "Putting it in your deck."
     player.deck.push card
   else
-    if Math.floor Math.random()
-      msg "You attack first, dealing #{player.stats.attack} damage."
-      if player.stats.attack >= card.hp
-        msg "The #{card.name} perishes."
-      else
-        msg "The #{card.name} counter-attacks for #{card.attack - player.stats.defense} damage."
-        msg "Discarding."
-        player.hp -= card.attack - player.stats.defense
+    monster.card = card
+    monster.hp = card.hp
+    if Math.floor Math.random() * 2
+      msg "Preemptive strike! You attack first"
     else
-      msg "The #{card.name} attacks first, dealing #{card.attack} damage."
-      msg "Discarding."
-      player.hp -= card.attack - player.stats.defense
+      msg "Back attack!"
+      monster_attack()
+    #   msg "You attack first, dealing #{player.stats.attack} damage."
+    #   if player.stats.attack >= card.hp
+    #     msg "The #{card.name} perishes."
+    #   else
+    #     msg "The #{card.name} counter-attacks for #{card.attack - player.stats.defense} damage."
+    #     msg "Discarding."
+    #     player.hp -= card.attack - player.stats.defense
+    # else
+    #   msg "The #{card.name} attacks first, dealing #{card.attack} damage."
+    #   msg "Discarding."
+    #   player.hp -= card.attack - player.stats.defense
+
+attack = (player, dmg, discard) ->
+  if monster.hp > 0
+    msg "You attack the #{monster.card.name}, dealing #{dmg - monster.card.defense} damage."
+    monster.hp -= dmg - monster.card.defense
+    discard()
+    if monster.hp < 1
+      msg "The #{monster.card.name} perishes."
+      drops = []
+      odds = 0
+      for card in monster.card.loot
+        for i in [1..card[1]]
+          drops.push card[0]
+        odds += card[1]
+
+      card_index = Math.floor Math.random() * (odds + 1)
+      drop = drops[card_index]
+      if drop
+        drop = cards.find drop
+        msg "The #{monster.card.name} dropped a #{drop.name}! Putting it in your deck."
+        player.deck.push drop
+
+      monster.hp = 0
+      monster.card = {}
+      #TODO: add exp and loot
+    else
+      monster_attack()
+  else
+    msg "There is no Monster on the table."
+
 
 
 
@@ -283,7 +375,7 @@ mine_card = (player) ->
 # -------------
 
 config =
-  channels: ['##the_basement']
+  channels: ['##mine_games']
   server: 'irc.freenode.net'
   botName: 'MineGames'
 
